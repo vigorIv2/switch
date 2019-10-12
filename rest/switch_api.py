@@ -20,10 +20,18 @@ app = Flask(__name__, static_url_path = "")
 auth = HTTPBasicAuth()
 
 
-gpio_channels=[17,18,27,22]
+#gpio_channels_lp=[26,19,13,6]
+gpio_channels_lp=[17,18,27,22]
+gpio_state_lp_initial=[0,1,1,1] # some channels come back up powered on
+gpio_state_lp=[0,0,0,0] # must have same number of elemens
+
+#gpio_channels=[17,18,27,22]
+gpio_channels=[26,19,13,6]
+gpio_state_initial=[0,0,0,0] # all hight power channels come back powered off
 gpio_state=[0,0,0,0] # must have same number of elements and all 0
 
-threshold=[[39,0],[39,0],[39,0],[39,0]]
+temp_too_high=40
+threshold=[[temp_too_high+0.1,0],[temp_too_high+0.2,0],[temp_too_high+0.3,0],[temp_too_high+0.4,0]]
 
 temper_mva=[0.0,0]
 temper_last=0.0
@@ -33,29 +41,47 @@ stats_fn="temperature_stats.csv"
 
 def setup_gpio():
     GPIO.setmode(GPIO.BCM)
-    for channel in gpio_channels:
-        GPIO.setup(channel, GPIO.OUT)
-        logconsole.info("GPIO channel "+str(channel)+" initialized")
+    for cn in range(0,len(gpio_channels)):
+        GPIO.setup(gpio_channels[cn], GPIO.OUT)
+        logconsole.info("GPIO channel "+str(gpio_channels[cn])+" initialized")
 
-def turn_on(channel_num,dry_run=False):
-    if not dry_run:
-        GPIO.output(gpio_channels[channel_num], GPIO.LOW)
-    logconsole.info("GPIO channel "+str(channel_num)+"/"+str(gpio_channels[channel_num])+" state = LOW, aka ON")
-    gpio_state[channel_num]=1
+def push_power_button(cn,sleep_sec):
+    # now let's push powerbutton on rig
+    GPIO.setup(gpio_channels_lp[cn], GPIO.OUT)
+    logconsole.debug("GPIO channel lp "+str(gpio_channels_lp[cn])+" initialized")
+    GPIO.output(gpio_channels_lp[cn], GPIO.LOW)
+    logconsole.info("GPIO LP channel "+str(cn)+"/"+str(gpio_channels_lp[cn])+" state LOW")
+    time.sleep(sleep_sec)
+    GPIO.output(gpio_channels_lp[cn], GPIO.HIGH)
+    logconsole.info("GPIO LP channel "+str(cn)+"/"+str(gpio_channels_lp[cn])+" state HIGH")
+    GPIO.cleanup(gpio_channels_lp[cn])
+    logconsole.debug("GPIO LP channel "+str(cn)+"/"+str(gpio_channels_lp[cn])+" clean")
 
-def turn_off(channel_num,dry_run=False):
-    if not dry_run:
-        GPIO.output(gpio_channels[channel_num], GPIO.HIGH)
-    logconsole.info("GPIO channel "+str(channel_num)+"/"+str(gpio_channels[channel_num])+" state = HIGH, aka OFF")
-    gpio_state[channel_num]=0
+def turn_on(cn):
+    logconsole.info("GPIO channel "+str(cn)+"/"+str(gpio_channels[cn])+" state = LOW, aka ON")
+    GPIO.output(gpio_channels[cn], GPIO.LOW)
+    gpio_state[cn]=1
+
+def turn_on_lp(cn):
+    push_power_button(cn,0.65)
+    gpio_state_lp[cn] = 1
+
+def turn_off(cn):
+    GPIO.output(gpio_channels[cn], GPIO.HIGH)
+    gpio_state[cn]=0
+    logconsole.info("GPIO channel "+str(cn)+"/"+str(gpio_channels[cn])+" state = HIGH, aka OFF")
+
+def turn_off_lp(cn):
+    push_power_button(cn,0.65)
+    gpio_state_lp[cn] = 0
 
 def all_on():
-    for channel_num in range(0,len(gpio_channels)):
-        turn_on(channel_num)
+    for cn in range(0,len(gpio_channels)):
+        turn_on(cn)
 
 def all_off():
-    for channel_num in range(0,len(gpio_channels)):
-        turn_off(channel_num)
+    for cn in range(0,len(gpio_channels)):
+        turn_off(cn)
 
 def shutdown_gpio():
     GPIO.cleanup()
@@ -106,7 +132,7 @@ def root_dir():  # pragma: no cover
 
 def compact_report():
     global stats_fn
-    date_days_ago = datetime.now() - timedelta(days=3)
+    date_days_ago = datetime.now() - timedelta(days=4)
     dts_days_ago=date_days_ago.strftime("%Y-%m-%d")
     csvn = open("new_%s" % (stats_fn), "a+")
     with open(stats_fn) as fp:
@@ -119,6 +145,7 @@ def compact_report():
     csvn.close()      
     os.rename("new_%s" % (stats_fn), stats_fn) 
 
+logconsole.info("------------------------------ Starting temperature monitoring service ========================================")
 compact_report()
 
 def check_temperature():
@@ -136,8 +163,7 @@ def check_temperature():
     csv.write("%s,%s,%s,%s,%s,%s,%s,%s,%s\n" % (dts,ft(temper_last),ft(temper_mva[0]),ft(cpu_last),ft(cpu_mva[0]),
         str(gpio_state[0]),str(gpio_state[1]),str(gpio_state[2]),str(gpio_state[3])))
     csv.close()
-    logconsole.info("Checking now="+str(now)+" temper_last="+str(temper_last)+" mva="+str(temper_mva[0])+" cnt="+str(temper_mva[1]))
-    logconsole.info("Checking cpu cpu_temp="+str(cpu_last)+" mva="+str(cpu_mva[0])+" cnt="+str(cpu_mva[1]))
+    logconsole.debug("Checking now="+str(now)+" temper_last="+str(temper_last)+" mva="+str(temper_mva[0])+" cnt="+str(temper_mva[1])+" cpu_temp="+str(cpu_last)+" cpu_mva="+str(cpu_mva[0]))
     if now - last_flip > 180: # not too often, every 3 minute
         last_flip = now
         for cn in range(0,len(gpio_channels)):
@@ -146,10 +172,16 @@ def check_temperature():
                     logconsole.info("The channel was already OFF now="+str(now)+" temper_last="+str(temper_last)+" mva="+str(temper_mva[0])+" cnt="+str(temper_mva[1]))
                 else:
                     logconsole.info("Turn it OFF now="+str(now)+" temper_last="+str(temper_last)+" mva="+str(temper_mva[0])+" cnt="+str(temper_mva[1]))
+                    turn_off_lp(cn)
+                    time.sleep(4)
                     turn_off(cn)
             else:    
                 if 1==gpio_state[cn]:
                     logconsole.info("The channel was already ON now="+str(now)+" temper_last="+str(temper_last)+" mva="+str(temper_mva[0])+" cnt="+str(temper_mva[1]))
+                    if 0==gpio_state_lp[cn]:
+                        turn_on_lp(cn)
+                    else:
+                        logconsole.info("The LP channel was already ON now="+str(now)+" temper_last="+str(temper_last)+" mva="+str(temper_mva[0])+" cnt="+str(temper_mva[1]))
                 else:
                     logconsole.info("Turn it ON now="+str(now)+" temper_last="+str(temper_last)+" mva="+str(temper_mva[0])+" cnt="+str(temper_mva[1]))
                     turn_on(cn)
@@ -169,7 +201,6 @@ def get_password(username):
     return None
 
 setup_gpio()
-all_on()
 
 def get_file(filename):  # pragma: no cover
     try:
@@ -225,7 +256,7 @@ var myLineChart = new Chart(ctxL, {
 	borderColor: [
 	  'rgba(200, 99, 132, .7)',
 	],
-	borderWidth: 2
+	borderWidth: 1
       },
       {
 	label: "CPU",
@@ -236,7 +267,7 @@ var myLineChart = new Chart(ctxL, {
 	borderColor: [
 	  'rgba(0, 10, 130, .7)',
 	],
-	borderWidth: 2
+	borderWidth: 1
       },
        {
 	label: "Threshold",
@@ -247,7 +278,7 @@ var myLineChart = new Chart(ctxL, {
 	borderColor: [
 	  'rgba(40, 13, 140, .7)',
 	],
-	borderWidth: 2
+	borderWidth: 1
       }
     ]
   },
@@ -309,6 +340,30 @@ def get_switch():
 
     return jsonify( { 'switch': make_public_switch(switch) } ), 201
 
+@app.route('/switch/api/v1.0/power', methods = ['POST'])
+@auth.login_required
+def get_power():
+    logconsole.info("get_power called with "+str(request.json)+" len(gpio_channels)="+str(len(gpio_channels)))
+    if not request.json or not 'cid' in request.json:
+        abort(400)
+    if int(request.json['cid']) < 0 or int(request.json['cid']) >= len(gpio_channels):
+        abort(400)
+    if not request.json or not 'state' in request.json:
+        abort(400)
+    switch = {
+        'cid': request.json['cid'],
+        'state': request.json['state'], 
+    }
+
+    cid = int(request.json['cid'])
+    state = int(request.json['state'])
+    if state == 0:
+        turn_off_lp(cid)
+    else:
+        turn_on_lp(cid)
+
+    return jsonify( { 'switch': make_public_switch(switch) } ), 201
+
 @app.route('/switch/api/v1.0/state', methods = ['POST'])
 @auth.login_required
 def get_state():
@@ -324,31 +379,6 @@ def get_state():
     }
 
     return jsonify( { 'state': make_public_state(state) } ), 201
-
-@app.route('/', methods=['GET'])
-def rootpage():  # pragma: no cover
-    content = get_file('chart.html')
-    return Response(content, mimetype="text/html")
-
-@app.route('/js/<path:path>')
-def send_js(path):
-        return send_from_directory('js', path)
-
-@app.route('/img/<path:path>')
-def send_img(path):
-        return send_from_directory('img', path)
-
-@app.route('/font/<path:path>')
-def send_font(path):
-        return send_from_directory('font', path)
-
-@app.route('/css/<path:path>')
-def send_css(path):
-        return send_from_directory('css', path)
-
-@app.route('/scss/<path:path>')
-def send_scss(path):
-        return send_from_directory('scss', path)
 
 mva = MovingAverageThread()
 mva.daemon = True

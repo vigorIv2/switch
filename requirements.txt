@@ -1,3 +1,4 @@
 flask
 flash_httpauth
+requests
 

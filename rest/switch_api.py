@@ -1,6 +1,7 @@
 #!flask/bin/python
 
 import os
+import json
 from flask import Flask, jsonify, abort, request, make_response, url_for, Response, send_from_directory
 import time
 from datetime import datetime, timedelta
@@ -19,7 +20,14 @@ logconsole.debug("Debug CONSOLE")
 app = Flask(__name__, static_url_path = "")
 auth = HTTPBasicAuth()
 
+root_path="/home/pi"
+rigs_fn = ".rigs.json"
 
+#reboot_time=[["01:00", "03:00", "06:00", "09:00", "12:00", "14:00", "17:00", "19:00", "21:00"],
+#             ["01:10", "03:10", "06:10", "09:10", "12:10", "14:10", "17:10", "19:10", "21:00"],
+#             ["01:20", "03:20", "06:20", "09:20", "12:20", "14:20", "17:20", "19:20", "21:20"],
+#             ["01:30", "03:30", "06:30", "09:30", "12:30", "14:30", "17:30", "19:30", "21:30"]]
+             
 #gpio_channels_lp=[26,19,13,6]
 gpio_channels_lp=[17,18,27,22]
 gpio_state_lp_initial=[0,1,1,1] # some channels come back up powered on
@@ -38,6 +46,12 @@ temper_last=0.0
 cpu_mva=[0.0,0]
 cpu_last=0.0
 stats_fn="temperature_stats.csv" 
+
+def getRigsConfig():
+    rigs={}
+    with open(rigs_fn) as json_file:
+        rigs = json.load(json_file)
+    return rigs
 
 def setup_gpio():
     GPIO.setmode(GPIO.BCM)
@@ -122,6 +136,19 @@ def get_temper_temp():
         temperTemp=38.888
     return float(temperTemp)
 
+def getRigStatus(cn):
+    r=getRigsConfig()["rigs"][cn]
+    res=False
+    if "ID" in r and not r["ID"] is None: 
+        rid=r["ID"]
+        res=run_cmd([root_path+"/switch/rest/api_check.sh",rid])
+        try:
+            res="OK" == res[0].strip()
+        except:
+            res = False
+    logconsole.info("Rig Status rid="+str(rid)+" up="+str(res))
+    return res
+
 last_flip = 0
 
 def ft(n):
@@ -132,7 +159,7 @@ def root_dir():  # pragma: no cover
 
 def compact_report():
     global stats_fn
-    date_days_ago = datetime.now() - timedelta(days=4)
+    date_days_ago = datetime.now() - timedelta(days=7)
     dts_days_ago=date_days_ago.strftime("%Y-%m-%d")
     csvn = open("new_%s" % (stats_fn), "a+")
     with open(stats_fn) as fp:
@@ -159,32 +186,37 @@ def check_temperature():
     update_mva(cpu_mva,cpu_last)
     now = time.time() 
     csv = open(stats_fn, "a+")
+    ctme=datetime.now().strftime("%H:%M")
+
     dts=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     csv.write("%s,%s,%s,%s,%s,%s,%s,%s,%s\n" % (dts,ft(temper_last),ft(temper_mva[0]),ft(cpu_last),ft(cpu_mva[0]),
         str(gpio_state[0]),str(gpio_state[1]),str(gpio_state[2]),str(gpio_state[3])))
     csv.close()
     logconsole.debug("Checking now="+str(now)+" temper_last="+str(temper_last)+" mva="+str(temper_mva[0])+" cnt="+str(temper_mva[1])+" cpu_temp="+str(cpu_last)+" cpu_mva="+str(cpu_mva[0]))
-    if now - last_flip > 180: # not too often, every 3 minute
+    if now - last_flip > 120: # not too often, every 2 minute
         last_flip = now
         for cn in range(0,len(gpio_channels)):
+            getRigStatus(cn)
             if threshold[cn][0] < temper_mva[0]: # turn it off
                 if 0==gpio_state[cn]:
-                    logconsole.info("The channel was already OFF now="+str(now)+" temper_last="+str(temper_last)+" mva="+str(temper_mva[0])+" cnt="+str(temper_mva[1]))
+                    logconsole.info("The channel "+str(cn)+" was already OFF now="+str(now)+" temper_last="+str(temper_last)+" mva="+str(temper_mva[0])+" cnt="+str(temper_mva[1]))
                 else:
-                    logconsole.info("Turn it OFF now="+str(now)+" temper_last="+str(temper_last)+" mva="+str(temper_mva[0])+" cnt="+str(temper_mva[1]))
+                    logconsole.info("Turn channel "+str(cn)+" OFF now="+str(now)+" temper_last="+str(temper_last)+" mva="+str(temper_mva[0])+" cnt="+str(temper_mva[1]))
                     turn_off_lp(cn)
                     time.sleep(4)
                     turn_off(cn)
+                continue    
             else:    
                 if 1==gpio_state[cn]:
-                    logconsole.info("The channel was already ON now="+str(now)+" temper_last="+str(temper_last)+" mva="+str(temper_mva[0])+" cnt="+str(temper_mva[1]))
+                    logconsole.info("The channel "+str(cn)+" was already ON now="+str(now)+" temper_last="+str(temper_last)+" mva="+str(temper_mva[0])+" cnt="+str(temper_mva[1]))
                     if 0==gpio_state_lp[cn]:
                         turn_on_lp(cn)
                     else:
-                        logconsole.info("The LP channel was already ON now="+str(now)+" temper_last="+str(temper_last)+" mva="+str(temper_mva[0])+" cnt="+str(temper_mva[1]))
+                        logconsole.info("The LP channel "+str(cn)+" was already ON now="+str(now)+" temper_last="+str(temper_last)+" mva="+str(temper_mva[0])+" cnt="+str(temper_mva[1]))
                 else:
-                    logconsole.info("Turn it ON now="+str(now)+" temper_last="+str(temper_last)+" mva="+str(temper_mva[0])+" cnt="+str(temper_mva[1]))
+                    logconsole.info("Turn channel "+str(cn)+" ON now="+str(now)+" temper_last="+str(temper_last)+" mva="+str(temper_mva[0])+" cnt="+str(temper_mva[1]))
                     turn_on(cn)
+
             time.sleep(2) # not all 4 lines at the same time    
 
 class MovingAverageThread(threading.Thread):

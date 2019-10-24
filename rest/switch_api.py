@@ -38,7 +38,7 @@ gpio_channels=[26,19,13,6]
 gpio_state_initial=[0,0,0,0] # all hight power channels come back powered off
 gpio_state=[0,0,0,0] # must have same number of elements and all 0
 
-temp_too_high=40
+temp_too_high=41
 threshold=[[temp_too_high+0.1,0],[temp_too_high+0.2,0],[temp_too_high+0.3,0],[temp_too_high+0.4,0]]
 
 temper_mva=[0.0,0]
@@ -137,19 +137,25 @@ def get_temper_temp():
     return float(temperTemp)
 
 def getRigStatus(cn):
-    r=getRigsConfig()["rigs"][cn]
+    rigs=getRigsConfig()["rigs"]
     res=False
-    if "ID" in r and not r["ID"] is None: 
-        rid=r["ID"]
-        res=run_cmd([root_path+"/switch/rest/api_check.sh",rid])
-        try:
-            res="OK" == res[0].strip()
-        except:
-            res = False
-    logconsole.info("Rig Status rid="+str(rid)+" up="+str(res))
+    if len(rigs) > cn: 
+        r=rigs[cn]
+        res=False
+        if "ID" in r and not r["ID"] is None: 
+            rid=r["ID"]
+            res=run_cmd([root_path+"/switch/rest/api_check.sh",rid])
+            try:
+                res="OK" == res[0].strip()
+            except:
+                res = False
+            logconsole.info("Rig Status cn="+str(cn)+"; rid="+str(rid)+"; name="+r["name"]+"; up="+str(res))
+    else:
+        res=True # for rigs not in config file report fake True, to not flip relays fruitlessly
     return res
 
 last_flip = 0
+last_status = [0,0,0,0]
 
 def ft(n):
     return "{:.2f}".format(n).strip("0").strip(".")
@@ -159,7 +165,7 @@ def root_dir():  # pragma: no cover
 
 def compact_report():
     global stats_fn
-    date_days_ago = datetime.now() - timedelta(days=7)
+    date_days_ago = datetime.now() - timedelta(days=getRigsConfig()["report_days"])
     dts_days_ago=date_days_ago.strftime("%Y-%m-%d")
     csvn = open("new_%s" % (stats_fn), "a+")
     with open(stats_fn) as fp:
@@ -179,6 +185,7 @@ def check_temperature():
     global temper_last
     global cpu_last
     global last_flip
+    global last_status
     global stats_fn
     temper_last=get_temper_temp()
     update_mva(temper_mva,temper_last)
@@ -192,11 +199,11 @@ def check_temperature():
     csv.write("%s,%s,%s,%s,%s,%s,%s,%s,%s\n" % (dts,ft(temper_last),ft(temper_mva[0]),ft(cpu_last),ft(cpu_mva[0]),
         str(gpio_state[0]),str(gpio_state[1]),str(gpio_state[2]),str(gpio_state[3])))
     csv.close()
-    logconsole.debug("Checking now="+str(now)+" temper_last="+str(temper_last)+" mva="+str(temper_mva[0])+" cnt="+str(temper_mva[1])+" cpu_temp="+str(cpu_last)+" cpu_mva="+str(cpu_mva[0]))
-    if now - last_flip > 120: # not too often, every 2 minute
+    diff_mva=cpu_mva[0]-temper_mva[0]
+    logconsole.debug("Checking now="+str(now)+" temper_last="+str(temper_last)+" mva="+str(temper_mva[0])+" cnt="+str(temper_mva[1])+" cpu_temp="+str(cpu_last)+" cpu_mva="+str(cpu_mva[0])+" diff_mva="+str(diff_mva))
+    if now - last_flip > getRigsConfig()["time_between_checks"]: # not too often, every 2.5 minute
         last_flip = now
         for cn in range(0,len(gpio_channels)):
-            getRigStatus(cn)
             if threshold[cn][0] < temper_mva[0]: # turn it off
                 if 0==gpio_state[cn]:
                     logconsole.info("The channel "+str(cn)+" was already OFF now="+str(now)+" temper_last="+str(temper_last)+" mva="+str(temper_mva[0])+" cnt="+str(temper_mva[1]))
@@ -218,12 +225,27 @@ def check_temperature():
                     turn_on(cn)
 
             time.sleep(2) # not all 4 lines at the same time    
+            if getRigStatus(cn):
+               logconsole.info("Channel "+str(cn)+" looking good, Status=True")
+            else:   
+                if now - last_status[cn] > getRigsConfig()["time_rig_up"]: # it may take a few minutes to boot rig completely and have status updated
+                   # time has passed and it is still not up
+                   last_status[cn] = now
+                   turn_off_lp(cn) # try turning off power switch on block
+                   time.sleep(7)   # wait for graceful shutdown
+                   turn_off(cn)    # turn the outlet off
+                   time.sleep(5)    
+                   turn_on(cn)     # outlet turns on
+                   time.sleep(5)   
+                   turn_on_lp(cn)  # block turns on 
+                else:    
+                   logconsole.info("Channel "+str(cn)+" awaiting status update")
 
 class MovingAverageThread(threading.Thread):
     def run (self):
         while True:
             check_temperature()
-            time.sleep(10)
+            time.sleep(30)
         logconsole.info("Thread %s: finishing", name)
 
 @auth.get_password

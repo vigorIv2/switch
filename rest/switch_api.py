@@ -144,12 +144,13 @@ def getRigStatus(cn):
         res=False
         if "ID" in r and not r["ID"] is None: 
             rid=r["ID"]
-            res=run_cmd([root_path+"/switch/rest/api_check.sh",rid])
+            status=run_cmd([root_path+"/switch/rest/api_check.sh",rid])
+            logconsole.info("Rig Status cn="+str(cn)+"; rid="+str(rid)+"; name="+r["name"]+"; status="+str(status))
             try:
-                res="OK" == res[0].strip()
+                res=status[0].strip() in ['"GREEN"','"YELLOW"','"BLUE"','"ORANGE"']
             except:
                 res = False
-            logconsole.info("Rig Status cn="+str(cn)+"; rid="+str(rid)+"; name="+r["name"]+"; up="+str(res))
+            logconsole.debug("Rig Status cn="+str(cn)+"; rid="+str(rid)+"; name="+r["name"]+"; up="+str(res))
     else:
         res=True # for rigs not in config file report fake True, to not flip relays fruitlessly
     return res
@@ -234,7 +235,7 @@ def check_temperature():
                    turn_off_lp(cn) # try turning off power switch on block
                    time.sleep(7)   # wait for graceful shutdown
                    turn_off(cn)    # turn the outlet off
-                   time.sleep(5)    
+                   time.sleep(8)    
                    turn_on(cn)     # outlet turns on
                    time.sleep(5)   
                    turn_on_lp(cn)  # block turns on 

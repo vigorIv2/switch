@@ -2,4 +2,4 @@
 rest/temperature_stats.csv
 **/.api_creds.json
 **/.rigs.json
-
+**/*.state

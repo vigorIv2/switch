@@ -14,6 +14,7 @@
   <link href="css/mdb.min.css" rel="stylesheet">
   <!-- Your custom styles (optional) -->
   <link href="css/style.css" rel="stylesheet">
+  <!-- meta http-equiv="refresh" content="30" -->
 </head>
 
 <body>
@@ -26,6 +27,41 @@
   <script type="text/javascript" src="js/bootstrap.min.js"></script>
   <!-- MDB core JavaScript -->
   <script type="text/javascript" src="js/mdb.min.js"></script>
+
+  <!-- update bulb state indicator -->
+  <script type="text/javascript">
+     $(document).ready(function(){
+        $("#bulb0").load("/switch/api/v1.0/bulb/0");
+        $("#bulb1").load("/switch/api/v1.0/bulb/1");
+        $("#bulb2").load("/switch/api/v1.0/bulb/2");
+        $("#bulb3").load("/switch/api/v1.0/bulb/3");
+     })
+  </script>
+
+  <script>
+	function sendData(uri,data) {
+	  var XHR = new XMLHttpRequest();
+
+	  // Define what happens on successful data submission
+	  XHR.addEventListener('load', function(event) {
+	    alert('Yeah! Data sent and response loaded.');
+	  });
+
+	  // Define what happens in case of error
+	  XHR.addEventListener('error', function(event) {
+	    alert('Oops! Something goes wrong.');
+	  });
+
+	  // Set up our request
+	  XHR.open('POST', '/switch/api/v1.0/'+uri);
+
+	  // Add the required HTTP header for form data POST requests
+	  XHR.setRequestHeader('Content-Type', 'application/json');
+
+	  // Finally, send our data.
+	  XHR.send(JSON.stringify(data));
+	}
+  </script>
 
 <!-- Grid container -->
 <div class="container">
@@ -45,19 +81,27 @@
 
   <div class="row d-flex justify-content-center">
     <div class="col-md-9">
-	<button type="button" class="btn btn-primary btn-rounded">MP 1</button>
-	<button type="button" class="btn btn-default btn-rounded">MP 2</button>
-	<button type="button" class="btn btn-secondary btn-rounded">MP 3</button>
-	<button type="button" class="btn btn-success btn-rounded">MP 4</button>
-    </div>	
-  </div>
-  <div class="row d-flex justify-content-center">
-    <div class="col-md-9">
-	<button type="button" class="btn btn-primary btn-rounded">RP 1</button>
-	<button type="button" class="btn btn-default btn-rounded">RP 2</button>
-	<button type="button" class="btn btn-secondary btn-rounded">RP 3</button>
-	<button type="button" class="btn btn-success btn-rounded">RP 4</button>
-    </div>	
+	<table width=50%>
+	  <tr>
+	   <td><div id="bulb0"></div></td>
+	   <td><div id="bulb1"></div></td>
+	   <td><div id="bulb2"></div></td>
+	   <td><div id="bulb3"></div></td>
+	  </tr>
+	  <tr>
+	   <td><button type="button" class="btn btn-default" onclick="sendData('power',{cid:'0',state:'flip'})">O1</button></td>
+	   <td><button type="button" class="btn btn-default" onclick="sendData('power',{cid:'1',state:'flip'})">O2</button></td>
+	   <td><button type="button" class="btn btn-default" onclick="sendData('power',{cid:'2',state:'flip'})">O3</button></td>
+	   <td><button type="button" class="btn btn-default" onclick="sendData('power',{cid:'3',state:'flip'})">O4</button></td>
+	  </tr> 
+	  <tr>
+	   <td><button type="button" class="btn btn-primary" onclick="sendData('switch',{cid:'0',state:'flip'})">S1</button></td>
+	   <td><button type="button" class="btn btn-primary" onclick="sendData('switch',{cid:'1',state:'flip'})">S2</button></td>
+	   <td><button type="button" class="btn btn-primary" onclick="sendData('switch',{cid:'2',state:'flip'})">S3</button></td>
+	   <td><button type="button" class="btn btn-primary" onclick="sendData('switch',{cid:'3',state:'flip'})">S4</button></td>
+	  </tr> 
+	</table>
+    </div>
   </div>
 
 

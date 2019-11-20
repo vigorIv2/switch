@@ -23,11 +23,6 @@ auth = HTTPBasicAuth()
 root_path="/home/pi"
 rigs_fn = ".rigs.json"
 
-#reboot_time=[["01:00", "03:00", "06:00", "09:00", "12:00", "14:00", "17:00", "19:00", "21:00"],
-#             ["01:10", "03:10", "06:10", "09:10", "12:10", "14:10", "17:10", "19:10", "21:00"],
-#             ["01:20", "03:20", "06:20", "09:20", "12:20", "14:20", "17:20", "19:20", "21:20"],
-#             ["01:30", "03:30", "06:30", "09:30", "12:30", "14:30", "17:30", "19:30", "21:30"]]
-             
 #gpio_channels_lp=[26,19,13,6]
 gpio_channels_lp=[17,18,27,22]
 gpio_state_lp_initial=[0,1,1,1] # some channels come back up powered on
@@ -136,6 +131,11 @@ def get_temper_temp():
         temperTemp=38.888
     return float(temperTemp)
 
+def writeState(cn,state):
+    cn_state_file = open("cn_"+str(cn)+".state", "w")
+    n = cn_state_file.write(state)
+    cn_state_file.close()
+ 
 def getRigStatus(cn):
     rigs=getRigsConfig()["rigs"]
     res=False
@@ -147,12 +147,14 @@ def getRigStatus(cn):
             status=run_cmd([root_path+"/switch/rest/api_check.sh",rid])
             logconsole.info("Rig Status cn="+str(cn)+"; rid="+str(rid)+"; name="+r["name"]+"; status="+str(status))
             try:
-                res=status[0].strip() in ['"GREEN"','"YELLOW"','"BLUE"','"ORANGE"']
+                res=not status[0].strip() in ['"RED"']
+                writeState(cn,status[0])
             except:
                 res = False
             logconsole.debug("Rig Status cn="+str(cn)+"; rid="+str(rid)+"; name="+r["name"]+"; up="+str(res))
     else:
         res=True # for rigs not in config file report fake True, to not flip relays fruitlessly
+        writeState(cn,'"N/A"\n')
     return res
 
 last_flip = 0
@@ -344,6 +346,22 @@ var myLineChart = new Chart(ctxL, {
 """
     return Response(body, mimetype="text/javascript")
 
+@app.route('/switch/api/v1.0/bulb/<cn>', methods=['GET'])
+def bulb(cn):  # draw an HTML element indicating given channel status
+    try:
+        statefn = os.path.join(root_dir(), "cn_"+cn+".state")
+        state = open(statefn).read().strip()
+    except IOError as exc:
+        state='"PURPLE"'
+    logconsole.info("bulb executed cn="+str(cn)+" color="+state)
+#    element="""
+#    <svg xmlns="http://www.w3.org/2000/svg">
+#      <circle cx="50" cy="50" r="15" fill="""+state+""" />
+#    </svg>
+#"""
+    element="<font size=50px color="+state+">&#x25CF;</font>"
+    return Response(element, mimetype="text/html")
+
 
 @auth.error_handler
 def unauthorized():
@@ -387,8 +405,16 @@ def get_switch():
     }
 
     cid = int(request.json['cid'])
-    state = int(request.json['state'])
-    if state == 0:
+    state = request.json['state']
+    if "flip" == state:
+        if getRigStatus(cid):
+          logconsole.info("current status=Up")
+          state="0"
+        else:  
+          logconsole.info("current status=Down")
+          state="1"
+
+    if "0" == state:
         turn_off(cid)
     else:
         turn_on(cid)
@@ -411,8 +437,16 @@ def get_power():
     }
 
     cid = int(request.json['cid'])
-    state = int(request.json['state'])
-    if state == 0:
+    state = request.json['state']
+    if "flip" == state:
+        if getRigStatus(cid):
+          logconsole.info("current status=Up")
+          state="0"
+        else:  
+          logconsole.info("current status=Down")
+          state="1"
+
+    if "0" == state:
         turn_off_lp(cid)
     else:
         turn_on_lp(cid)
@@ -435,6 +469,7 @@ def get_state():
 
     return jsonify( { 'state': make_public_state(state) } ), 201
 
+# uncomment when done implementing buttons
 mva = MovingAverageThread()
 mva.daemon = True
 mva.start()

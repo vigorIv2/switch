@@ -25,7 +25,7 @@ rigs_fn = ".rigs.json"
 
 #gpio_channels_lp=[26,19,13,6]
 gpio_channels_lp=[17,18,27,22]
-gpio_state_lp_initial=[0,1,1,1] # some channels come back up powered on
+gpio_state_lp_initial=[0,0,0,0] # some channels come back up powered on
 gpio_state_lp=[0,0,0,0] # must have same number of elemens
 
 #gpio_channels=[17,18,27,22]
@@ -33,7 +33,7 @@ gpio_channels=[26,19,13,6]
 gpio_state_initial=[0,0,0,0] # all hight power channels come back powered off
 gpio_state=[0,0,0,0] # must have same number of elements and all 0
 
-temp_too_high=41
+temp_too_high=71
 threshold=[[temp_too_high+0.1,0],[temp_too_high+0.2,0],[temp_too_high+0.3,0],[temp_too_high+0.4,0]]
 
 temper_mva=[0.0,0]
@@ -108,6 +108,17 @@ def run_cmd(cmd):
     response = output.communicate()
     return response
 
+def set_remote_time(addr):
+    if addr != "":
+        now_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        logconsole.info("setting date "+str(now_time)+" on host "+addr)
+        rc = os.WEXITSTATUS(os.system('ssh-keygen -R ' + addr))
+        logconsole.debug("removed previous key in known_hosts for "+addr+" rc="+str(rc))
+        rc = os.WEXITSTATUS(os.system('ssh -o "StrictHostKeyChecking no" -i /home/pi/.ssh/nhos_rsa nhos@' + addr + " \'sudo date -s \""+str(now_time)+"\"\' 2>&1"))
+        logconsole.debug("setting date "+str(now_time)+" on host "+addr+" rc="+str(rc))
+        return rc
+    return 0
+
 def get_cpu_temp():
     res=run_cmd(["cat","/sys/class/thermal/thermal_zone0/temp"])
     cpuTemp0=int(res[0].strip())
@@ -136,6 +147,15 @@ def writeState(cn,state):
     n = cn_state_file.write(state)
     cn_state_file.close()
  
+def getRigAddress(cn):
+    rigs=getRigsConfig()["rigs"]
+    res=""
+    if len(rigs) > cn: 
+        r=rigs[cn]
+        if "address" in r and not r["address"] is None: 
+            res=r["address"]
+    return res
+
 def getRigStatus(cn):
     rigs=getRigsConfig()["rigs"]
     res=False
@@ -184,7 +204,28 @@ def compact_report():
 logconsole.info("------------------------------ Starting temperature monitoring service ========================================")
 compact_report()
 
-def check_temperature():
+def track_temperature():
+    global temper_last
+    global cpu_last
+    global last_flip
+    global last_status
+    global stats_fn
+    temper_last=get_temper_temp()
+    update_mva(temper_mva,temper_last)
+    cpu_last=get_cpu_temp()
+    update_mva(cpu_mva,cpu_last)
+    now = time.time() 
+    csv = open(stats_fn, "a+")
+    ctme=datetime.now().strftime("%H:%M")
+
+    dts=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    csv.write("%s,%s,%s,%s,%s,%s,%s,%s,%s\n" % (dts,ft(temper_last),ft(temper_mva[0]),ft(cpu_last),ft(cpu_mva[0]),
+        str(gpio_state[0]),str(gpio_state[1]),str(gpio_state[2]),str(gpio_state[3])))
+    csv.close()
+    diff_mva=cpu_mva[0]-temper_mva[0]
+    logconsole.debug("Tracking temperature now="+str(now)+" temper_last="+str(temper_last)+" mva="+str(temper_mva[0])+" cnt="+str(temper_mva[1])+" cpu_temp="+str(cpu_last)+" cpu_mva="+str(cpu_mva[0])+" diff_mva="+str(diff_mva))
+
+def check_temperature_to_refactor():
     global temper_last
     global cpu_last
     global last_flip
@@ -230,6 +271,7 @@ def check_temperature():
             time.sleep(2) # not all 4 lines at the same time    
             if getRigStatus(cn):
                logconsole.info("Channel "+str(cn)+" looking good, Status=True")
+               set_remote_time(getRigAddress(cn))
             else:   
                 if now - last_status[cn] > getRigsConfig()["time_rig_up"]: # it may take a few minutes to boot rig completely and have status updated
                    # time has passed and it is still not up
@@ -246,10 +288,30 @@ def check_temperature():
 
 class MovingAverageThread(threading.Thread):
     def run (self):
+        logconsole.info("Temperature tracking thread started")
         while True:
-            check_temperature()
+            track_temperature()
             time.sleep(30)
-        logconsole.info("Thread %s: finishing", name)
+
+def initialTurnOn(cn):
+    logconsole.info("Initial turn on channel %s", cn)
+
+def watch_channel(cn):
+    logconsole.info("Watch channel %s", cn)
+    set_remote_time(getRigAddress(cn))
+    if getRigStatus(cn):
+      logconsole.info("Channel "+str(cn)+" looking good, Status=True")
+ 
+class ChannelWatchdogThread(threading.Thread):
+    def __init__(self, number):
+        super(ChannelWatchdogThread, self).__init__()
+        self.channel_number = number
+    def run (self):
+        logconsole.info("Watchdog thread for channel %s: started", self.channel_number)
+        initialTurnOn(self.channel_number)
+        while True:
+            watch_channel(self.channel_number)
+            time.sleep(30)
 
 @auth.get_password
 def get_password(username):
@@ -472,8 +534,15 @@ def get_state():
 # uncomment when done implementing buttons
 mva = MovingAverageThread()
 mva.daemon = True
+thread_list = []
+thread_list.append(mva)
 mva.start()
+for cn in range(0,len(gpio_channels)):
+    watchdog_thread = ChannelWatchdogThread(cn)
+    watchdog_thread.daemon = True
+    thread_list.append(watchdog_thread)
+    watchdog_thread.start()
+    time.sleep(5)
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0",threaded=True)
-

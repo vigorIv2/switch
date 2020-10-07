@@ -31,6 +31,7 @@
   <!-- update bulb state indicator -->
   <script type="text/javascript">
      $(document).ready(function(){
+        $("#protected").load("/switch/api/v1.0/protected");
         $("#bulb0").load("/switch/api/v1.0/bulb/0");
         $("#bulb1").load("/switch/api/v1.0/bulb/1");
         $("#bulb2").load("/switch/api/v1.0/bulb/2");
@@ -66,6 +67,7 @@
 <!-- Grid container -->
 <div class="container">
 
+  <center><div id="protected"></div></center>
   <!--Grid row-->
   <div class="row d-flex justify-content-center">
 
